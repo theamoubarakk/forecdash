@@ -50,7 +50,7 @@ def _demo_df():
 # ---- Load data
 df = None
 if source.startswith("Use repo file"):
-    path = Path("data/BABA JINA SALES DATA.xlsx")
+    path = Path("forecdash/(3) BABA JINA SALES DATA.xlsx")
     if path.exists():
         sheet = sheet_name if not sheet_name.isdigit() else int(sheet_name)
         df = load_sales_from_excel(path, sheet=sheet, date_col=date_col, value_col=value_col, agg_to_month=agg_to_month)
