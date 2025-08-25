@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from pathlib import Path
 from datetime import date
 
@@ -7,13 +8,12 @@ from forecasting_core import (
     load_sales_from_excel,
     split_train_test,
     sarima_one_fig,
-    prophet_two_figs,   # returns (forecast_fig, components_fig)
+    prophet_two_figs,
 )
 
-st.set_page_config(page_title="Forecasting Dashboard — SARIMA + Prophet", layout="wide")
-st.title("Forecasting Dashboard — 3 Graphs (SARIMA + Prophet)")
+st.set_page_config(page_title="Forecasting Dashboard — 3 Graphs", layout="wide")
+st.title("Forecasting Dashboard — 3 Graphs (1 SARIMA + 2 Prophet)")
 
-# ---------------- Sidebar ----------------
 with st.sidebar:
     st.header("Data")
     source = st.radio(
@@ -50,15 +50,14 @@ with st.sidebar:
     multiplicative = st.checkbox("Multiplicative seasonality", False)
     add_oct_dec = st.checkbox("Add Oct/Dec regressors", False)
 
-# ---------------- Data load ----------------
 def _make_demo_df():
     """Fallback monthly demo series so graphs render if no file is present."""
     idx = pd.date_range("2019-01-01", periods=72, freq="M")
-    trend = pd.Series(range(len(idx)), index=idx) * 1.2
-    season = 10 * pd.Series(pd.sin(2 * 3.14159 * (idx.month / 12)), index=idx)
-    noise = pd.Series(pd.Series(pd.np.random.randn(len(idx))).rolling(2, min_periods=1).mean().values, index=idx)
-    y = (100 + trend + season + noise).rename("y")
-    return pd.DataFrame({"ds": idx, "y": y.values})
+    trend = np.arange(len(idx)) * 1.2
+    season = 10 * np.sin(2 * np.pi * (idx.month / 12))
+    noise = np.random.normal(scale=2.0, size=len(idx))
+    y = 100 + trend + season + noise
+    return pd.DataFrame({"ds": idx, "y": y})
 
 df = None
 if source.startswith("Use repo file"):
@@ -78,7 +77,6 @@ else:
 if df is None:
     st.info("Upload a file or add data/BABA JINA SALES DATA.xlsx to the repo.")
     st.stop()
-
 if len(df) < 6:
     st.error("Not enough data to fit models (need at least ~6 points).")
     st.stop()
@@ -87,24 +85,21 @@ st.success(f"Loaded {len(df):,} rows.")
 with st.expander("Preview data", expanded=False):
     st.dataframe(df.head(20))
 
-# ---------------- Split ----------------
 try:
     train_df, test_df = split_train_test(
         df,
         cutoff_date=pd.to_datetime(cutoff_date) if cutoff_date else None,
         test_periods=int(test_periods) if test_periods else None
     )
-    st.write(f"Train: {len(train_df)} rows | Test: {len(test_df)} rows")
 except Exception as e:
     st.error(f"Split error: {e}")
     st.stop()
+st.write(f"Train: {len(train_df)} rows | Test: {len(test_df)} rows")
 
-# Guard: if s==0 ensure no seasonal terms
 if s == 0 and any(v > 0 for v in (P, D, Q)):
     st.warning("Seasonal period is 0 → forcing P=D=Q=0 to avoid errors.")
     P = D = Q = 0
 
-# ---------------- Caches ----------------
 @st.cache_resource(show_spinner=False)
 def _sarima_cached(train_df, test_df, order, seasonal_order):
     return sarima_one_fig(train_df, test_df, order=order, seasonal_order=seasonal_order)
@@ -117,7 +112,6 @@ def _prophet_cached(train_df, test_df, yearly, weekly, daily, multiplicative, ad
         multiplicative=multiplicative, add_oct_dec=add_oct_dec
     )
 
-# ---------------- Render 3 graphs ----------------
 # 1) SARIMA
 try:
     sarima_fig, sarima_forecast = _sarima_cached(
@@ -129,7 +123,7 @@ try:
 except Exception as e:
     st.error(f"SARIMA error: {e}")
 
-# 2 & 3) Prophet (handle ImportError gracefully)
+# 2 & 3) Prophet
 try:
     (p_forecast_fig, p_components_fig), p_forecast_df = _prophet_cached(
         train_df, test_df, yearly, weekly, daily, multiplicative, add_oct_dec
@@ -140,14 +134,10 @@ try:
     st.subheader("3) Prophet — Components")
     st.pyplot(p_components_fig, clear_figure=False)
 except ImportError:
-    st.warning(
-        "Prophet isn’t installed, so only the SARIMA graph is shown. "
-        "Add `prophet==1.1.5` and `pystan==2.19.1.1` to requirements.txt to enable Prophet graphs."
-    )
+    st.warning("Prophet isn’t installed; only SARIMA is shown.")
 except Exception as e:
     st.error(f"Prophet error: {e}")
 
-# Downloads (optional)
 with st.expander("Download outputs"):
     if 'sarima_forecast' in locals():
         st.download_button(
