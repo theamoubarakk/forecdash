@@ -1,4 +1,3 @@
-# forecasting_core.py
 # Interactive forecasting core used by app.py
 # - Data loading and monthly aggregation
 # - Train/Test split helpers
@@ -13,7 +12,6 @@ import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-
 # =========================
 # Data loading / utilities
 # =========================
@@ -25,13 +23,6 @@ def load_sales_from_excel(
     agg_to_month: bool = True,
     agg_func: str = "sum",
 ) -> pd.DataFrame:
-    """
-    Read an Excel sheet and return a tidy DataFrame with columns:
-      - ds (datetime64[ns])
-      - y  (float)
-
-    If agg_to_month is True, resamples to monthly frequency and aggregates with agg_func.
-    """
     df = pd.read_excel(path_or_buffer, sheet_name=sheet)
 
     if date_col not in df.columns or value_col not in df.columns:
@@ -61,11 +52,6 @@ def load_sales_from_excel(
 def split_train_test(
     df: pd.DataFrame, cutoff_date: str | pd.Timestamp | None = None, test_periods: int | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Split df (with columns ds,y) into train/test using either:
-      - cutoff_date (train ≤ cutoff, test > cutoff), OR
-      - last 'test_periods' observations as test.
-    """
     if cutoff_date is not None:
         cutoff_date = pd.to_datetime(cutoff_date)
         train = df[df["ds"] <= cutoff_date].copy()
@@ -84,7 +70,6 @@ def split_train_test(
 
     return train.reset_index(drop=True), test.reset_index(drop=True)
 
-
 # =====================
 # Prophet (PyStan) path
 # =====================
@@ -100,16 +85,11 @@ def prophet_three_figs(
     add_oct_dec: bool = False,
 ):
     """
-    Fit Prophet (forced to PyStan backend) and return:
-      - figs: (fig_forecast, fig_components, fig_resid_qq)
-      - forecast: full Prophet forecast DataFrame (train + future)
-
-    Graphs (exactly three):
-      1) Forecast vs Actuals (train + test + yhat + intervals)
-      2) Prophet Components (trend/seasonality)
-      3) Residuals Q–Q plot (in-sample)
+    Returns:
+      figs: (fig_forecast, fig_components, fig_resid_qq)
+      forecast: full Prophet forecast (train + future)
     """
-    # Lazy import + force PyStan backend (avoids slow CmdStan download/compile)
+    # Lazy import + force PyStan backend
     from prophet import Prophet
 
     m = Prophet(
@@ -121,15 +101,12 @@ def prophet_three_figs(
     )
 
     train = train_df.copy()
-
-    # Optional monthly dummy regressors for Oct/Dec (if your notebook used them)
     if add_oct_dec:
         train["oct_bump"] = (train["ds"].dt.month == 10).astype(int)
         train["dec_peak"] = (train["ds"].dt.month == 12).astype(int)
         m.add_regressor("oct_bump")
         m.add_regressor("dec_peak")
 
-    # Prophet expects columns 'ds' and 'y'
     m.fit(train)
 
     if horizon is None:
@@ -149,28 +126,23 @@ def prophet_three_figs(
         ax1.plot(test_df["ds"], test_df["y"], label="Test", linewidth=1.8)
     ax1.plot(forecast["ds"], forecast["yhat"], linestyle="--", label="Forecast")
     ax1.fill_between(
-        forecast["ds"],
-        forecast["yhat_lower"],
-        forecast["yhat_upper"],
-        alpha=0.2,
-        label="PI",
+        forecast["ds"], forecast["yhat_lower"], forecast["yhat_upper"], alpha=0.2, label="PI"
     )
     ax1.set_title("Prophet: Forecast vs Actuals")
     ax1.set_xlabel("Date")
     ax1.set_ylabel("Value")
     ax1.legend(loc="best")
 
-    # 2) Components (Prophet renders its own matplotlib Figure)
+    # 2) Components
     fig2 = m.plot_components(forecast)
 
-    # 3) Residuals Q–Q (use in-sample residuals on train)
+    # 3) Residuals Q–Q on train
     train_pred = m.predict(train_df[["ds"]])
     resid = train_df["y"].values - train_pred["yhat"].values
     fig3 = sm.qqplot(resid, line="s")
     fig3.suptitle("Prophet Residuals: Q–Q Plot")
 
     return (fig1, fig2, fig3), forecast
-
 
 # ==================
 # SARIMA (statsmodels)
@@ -182,14 +154,9 @@ def sarima_three_figs(
     seasonal_order: tuple[int, int, int, int] = (0, 1, 1, 12),
 ):
     """
-    Fit SARIMA and return:
-      - figs: (fig_forecast, fig_resid_hist, fig_resid_qq)
-      - forecast_df: DataFrame with columns [ds, yhat, yhat_lower, yhat_upper] aligned on test horizon
-
-    Graphs (exactly three):
-      1) Forecast vs Actuals (train + test + yhat + 95% PI)
-      2) Residuals Histogram
-      3) Residuals Q–Q plot
+    Returns:
+      figs: (fig_forecast, fig_resid_hist, fig_resid_qq)
+      forecast_df: [ds, yhat, yhat_lower, yhat_upper] on the test horizon
     """
     endog = train_df.set_index("ds")["y"]
     model = SARIMAX(
@@ -206,7 +173,6 @@ def sarima_three_figs(
     pred_mean = pred.predicted_mean
     pred_ci = pred.conf_int()
 
-    # Align to test index for plotting and CSV
     idx = test_df.set_index("ds").index
 
     # 1) Forecast vs Actuals
@@ -239,17 +205,17 @@ def sarima_three_figs(
     fig3 = sm.qqplot(resid, line="s")
     fig3.suptitle("SARIMA Residuals: Q–Q Plot")
 
-    # Assemble forecast aligned to test horizon for download
-    out = pd.DataFrame(
-        {
-            "ds": test_df["ds"].values,
-            "yhat": pred_mean.reindex(idx).values if steps > 0 else np.array([]),
-        }
-    )
+    out = pd.DataFrame({"ds": test_df["ds"].values})
     if steps > 0:
-        out["yhat_lower"] = lower.values
-        out["yhat_upper"] = upper.values
+        out["yhat"] = pred_mean.reindex(idx).values
+        try:
+            out["yhat_lower"] = lower.values
+            out["yhat_upper"] = upper.values
+        except Exception:
+            out["yhat_lower"] = np.nan
+            out["yhat_upper"] = np.nan
     else:
+        out["yhat"] = np.nan
         out["yhat_lower"] = np.nan
         out["yhat_upper"] = np.nan
 
