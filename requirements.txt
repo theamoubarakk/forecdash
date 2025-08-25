@@ -1,17 +1,13 @@
 streamlit==1.37.0
 pandas==2.2.2
-# Use a NumPy version Pystan builds against reliably
 numpy==1.23.5
 matplotlib==3.8.4
 openpyxl==3.1.5
-# Statsmodels needs SciPy <2
 scipy==1.11.4
 statsmodels==0.14.2
-# Prophet (PyStan backend) build helpers & pins
 Cython<3
 setuptools<70
 pystan==2.19.1.1
 prophet==1.1.5
-# Prophet transitive deps that sometimes fail to auto‑resolve
 holidays==0.24
 convertdate==2.4.0
