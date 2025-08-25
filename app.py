@@ -15,10 +15,11 @@ st.title("Forecasting Dashboard — SARIMA (3 Graphs)")
 
 with st.sidebar:
     st.header("Data")
-    # Default to repo file so graphs appear on first load
-    source = st.radio("Source",
-                      ["Use repo file (data/BABA JINA SALES DATA.xlsx)", "Upload Excel"],
-                      index=0)
+    source = st.radio(
+        "Source",
+        ["Use repo file (data/BABA JINA SALES DATA.xlsx)", "Upload Excel"],
+        index=0
+    )
     sheet_name = st.text_input("Sheet (name or index)", value="0")
     date_col = st.text_input("Date column", value="Date")
     value_col = st.text_input("Value column", value="Sales")
@@ -46,7 +47,7 @@ def _demo_df():
     y = 100 + np.arange(len(idx))*1.2 + 10*np.sin(2*np.pi*idx.month/12) + np.random.normal(0,2,len(idx))
     return pd.DataFrame({"ds": idx, "y": y})
 
-# -------- Load data --------
+# ---- Load data
 df = None
 if source.startswith("Use repo file"):
     path = Path("data/BABA JINA SALES DATA.xlsx")
@@ -73,12 +74,12 @@ st.success(f"Loaded {len(df):,} rows.")
 with st.expander("Preview data", expanded=False):
     st.dataframe(df.head(20))
 
-# -------- Split --------
+# ---- Split
 try:
     train_df, test_df = split_train_test(
         df,
         cutoff_date=pd.to_datetime(cutoff_date) if cutoff_date else None,
-        test_periods=int(test_periods) if test_periods else None
+        test_periods=int(test_periods) if test_periods else None,
     )
 except Exception as e:
     st.error(f"Split error: {e}")
@@ -94,8 +95,31 @@ if s == 0 and any(v > 0 for v in (P, D, Q)):
 def _sarima_cached(train_df, test_df, order, seasonal_order):
     return sarima_three_figs(train_df, test_df, order=order, seasonal_order=seasonal_order)
 
-# -------- Fit & plot 3 graphs --------
+# ---- Fit & plot 3 graphs
 try:
     figs, forecast_df = _sarima_cached(
-        train_df, test_df,
-        (int(p), int(d), int(q)
+        train_df,
+        test_df,
+        (int(p), int(d), int(q)),
+        (int(P), int(D), int(Q), int(s)),
+    )
+    f1, f2, f3 = figs
+
+    st.subheader("1) Forecast vs Actuals")
+    st.pyplot(f1, clear_figure=False)
+
+    st.subheader("2) Residuals Histogram")
+    st.pyplot(f2, clear_figure=False)
+
+    st.subheader("3) Residuals Q–Q")
+    st.pyplot(f3, clear_figure=False)
+
+    with st.expander("Download forecast (CSV)"):
+        st.download_button(
+            "Download",
+            forecast_df.to_csv(index=False).encode("utf-8"),
+            "sarima_forecast.csv",
+            "text/csv",
+        )
+except Exception as e:
+    st.error(f"SARIMA error: {e}")
