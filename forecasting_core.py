@@ -34,8 +34,14 @@ def split_train_test(df: pd.DataFrame, cutoff_date=None, test_periods=None):
     if train.empty or test.empty: raise ValueError("Empty train/test after split.")
     return train.reset_index(drop=True), test.reset_index(drop=True)
 
-# ---------- SARIMA: return ONE figure ----------
-def sarima_one_fig(train_df, test_df, order=(1,1,1), seasonal_order=(0,1,1,12)):
+# ---------- SARIMA: 3 figures ----------
+def sarima_three_figs(train_df, test_df,
+                      order=(1,1,1), seasonal_order=(0,1,1,12)):
+    """
+    Returns:
+      - figs: (fig_forecast, fig_resid_hist, fig_resid_qq)
+      - forecast_df: [ds, yhat, yhat_lower, yhat_upper] aligned to test horizon
+    """
     endog = train_df.set_index("ds")["y"]
     model = SARIMAX(endog, order=order, seasonal_order=seasonal_order,
                     enforce_stationarity=False, enforce_invertibility=False)
@@ -43,66 +49,46 @@ def sarima_one_fig(train_df, test_df, order=(1,1,1), seasonal_order=(0,1,1,12)):
 
     steps = len(test_df)
     pred = res.get_forecast(steps=steps)
-    pred_mean = pred.predicted_mean
-    pred_ci = pred.conf_int()
-    idx = test_df.set_index("ds").index
+    pred_mean = pred.predicted_mean if steps > 0 else pd.Series(dtype=float)
+    pred_ci = pred.conf_int() if steps > 0 else pd.DataFrame()
+    idx = test_df.set_index("ds").index if steps > 0 else pd.DatetimeIndex([])
 
-    fig, ax = plt.subplots(figsize=(11, 4))
-    ax.plot(train_df["ds"], train_df["y"], label="Train", linewidth=1.8)
+    # 1) Forecast vs Actuals
+    fig1, ax1 = plt.subplots(figsize=(11, 4))
+    ax1.plot(train_df["ds"], train_df["y"], label="Train", linewidth=1.8)
     if steps > 0:
-        ax.plot(test_df["ds"], test_df["y"], label="Test", linewidth=1.8)
-        ax.plot(idx, pred_mean.reindex(idx), linestyle="--", label="Forecast")
+        ax1.plot(test_df["ds"], test_df["y"], label="Test", linewidth=1.8)
+        ax1.plot(idx, pred_mean.reindex(idx), linestyle="--", label="Forecast")
         try:
-            lower = pred_ci["lower y"].reindex(idx); upper = pred_ci["upper y"].reindex(idx)
+            lower = pred_ci["lower y"].reindex(idx)
+            upper = pred_ci["upper y"].reindex(idx)
         except KeyError:
-            lower = pred_ci.iloc[:, 0].reindex(idx); upper = pred_ci.iloc[:, 1].reindex(idx)
-        ax.fill_between(idx, lower, upper, alpha=0.2, label="95% PI")
-    ax.set_title(f"SARIMA{order}×{seasonal_order}: Forecast vs Actuals")
-    ax.set_xlabel("Date"); ax.set_ylabel("Value"); ax.legend(loc="best")
+            lower = pred_ci.iloc[:, 0].reindex(idx)
+            upper = pred_ci.iloc[:, 1].reindex(idx)
+        ax1.fill_between(idx, lower, upper, alpha=0.2, label="95% PI")
+    ax1.set_title(f"SARIMA{order}×{seasonal_order}: Forecast vs Actuals")
+    ax1.set_xlabel("Date"); ax1.set_ylabel("Value"); ax1.legend(loc="best")
 
-    out = pd.DataFrame({"ds": test_df["ds"].values}) if steps > 0 else pd.DataFrame({"ds": []})
+    # 2) Residuals Histogram
+    resid = res.resid.dropna()
+    fig2, ax2 = plt.subplots(figsize=(11, 4))
+    ax2.hist(resid, bins=30, alpha=0.7)
+    ax2.set_title("SARIMA Residuals: Histogram")
+    ax2.set_xlabel("Residual"); ax2.set_ylabel("Frequency")
+
+    # 3) Residuals Q–Q
+    fig3 = sm.qqplot(resid, line="s")
+    fig3.suptitle("SARIMA Residuals: Q–Q Plot")
+
+    # Forecast table aligned to test horizon
+    out = pd.DataFrame({"ds": test_df["ds"].values}) if steps > 0 else pd.DataFrame(columns=["ds","yhat","yhat_lower","yhat_upper"])
     if steps > 0:
         out["yhat"] = pred_mean.reindex(idx).values
-        out["yhat_lower"] = lower.values
-        out["yhat_upper"] = upper.values
-    return fig, out
+        try:
+            out["yhat_lower"] = lower.values
+            out["yhat_upper"] = upper.values
+        except Exception:
+            out["yhat_lower"] = np.nan
+            out["yhat_upper"] = np.nan
 
-# ---------- Prophet: return TWO figures ----------
-def prophet_two_figs(train_df, test_df, *, yearly=True, weekly=False, daily=False,
-                     multiplicative=False, add_oct_dec=False):
-    # Lazy import + force PyStan backend to avoid CmdStan compile
-    from prophet import Prophet
-
-    m = Prophet(
-        yearly_seasonality=yearly,
-        weekly_seasonality=weekly,
-        daily_seasonality=daily,
-        seasonality_mode="multiplicative" if multiplicative else "additive",
-        stan_backend="pystan",
-    )
-
-    train = train_df.copy()
-    if add_oct_dec:
-        train["oct_bump"] = (train["ds"].dt.month == 10).astype(int)
-        train["dec_peak"] = (train["ds"].dt.month == 12).astype(int)
-        m.add_regressor("oct_bump"); m.add_regressor("dec_peak")
-
-    m.fit(train)
-    future = m.make_future_dataframe(periods=len(test_df), freq="M")
-    if add_oct_dec:
-        future["oct_bump"] = (future["ds"].dt.month == 10).astype(int)
-        future["dec_peak"] = (future["ds"].dt.month == 12).astype(int)
-    forecast = m.predict(future)
-
-    # Forecast vs Actuals
-    f1, ax1 = plt.subplots(figsize=(11, 4))
-    ax1.plot(train_df["ds"], train_df["y"], label="Train", linewidth=1.8)
-    if len(test_df) > 0: ax1.plot(test_df["ds"], test_df["y"], label="Test", linewidth=1.8)
-    ax1.plot(forecast["ds"], forecast["yhat"], linestyle="--", label="Forecast")
-    ax1.fill_between(forecast["ds"], forecast["yhat_lower"], forecast["yhat_upper"], alpha=0.2, label="PI")
-    ax1.set_title("Prophet: Forecast vs Actuals"); ax1.set_xlabel("Date"); ax1.set_ylabel("Value"); ax1.legend(loc="best")
-
-    # Components
-    f2 = m.plot_components(forecast)
-
-    return (f1, f2), forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+    return (fig1, fig2, fig3), out
