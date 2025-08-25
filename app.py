@@ -17,7 +17,7 @@ with st.sidebar:
     st.header("Data")
     source = st.radio(
         "Source",
-        ["Use repo file (data/(3) BABA JINA SALES DATA.xlsx)", "Upload Excel"],
+        ["Use repo file (forecdash/(3) BABA JINA SALES DATA.xlsx)", "Upload Excel"],
         index=0
     )
     sheet_name = st.text_input("Sheet (name or index)", value="0")
